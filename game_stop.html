@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>إنسان حيوان</title>
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        .letter-circle { width:100px; height:100px; border-radius:50%; display:flex; justify-content:center; align-items:center; font-size:3.5rem; font-weight:bold; margin:20px auto; }
+        .input-group { margin-bottom:10px; text-align:right; } .input-group label { color:#aaa; font-size:0.9rem; }
+        .res-table { width:100%; border-collapse:collapse; margin-top:10px; font-size:0.9rem; }
+        .res-table th, .res-table td { border:1px solid #444; padding:8px; text-align:center; }
+        .res-table th { background:rgba(255,255,255,0.1); color:var(--primary); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div id="setup">
+            <h1 class="main-title">إنسان حيوان</h1>
+            <input type="text" id="pName" placeholder="اسمك">
+            <select id="timeLimit" style="margin-top:10px;">
+                <option value="60">60 ثانية</option>
+                <option value="30">30 ثانية</option>
+            </select>
+            <button class="big-btn" onclick="create()">إنشاء غرفة</button>
+            <div style="margin-top:20px; border-top:1px solid rgba(255,255,255,0.1); padding-top:20px;">
+                <input type="text" id="code" placeholder="كود الغرفة">
+                <button class="big-btn" style="background:#333; box-shadow:none;" onclick="join()">انضمام</button>
+            </div>
+        </div>
+        <div id="lobby" class="hidden">
+            <h2>انتظار...</h2>
+            <div onclick="cp()" style="background:rgba(0,0,0,0.3); padding:15px; border-radius:15px; cursor:pointer; font-size:1.5rem;">Code: <span id="dCode" style="color:var(--primary);">...</span></div>
+            <div id="pList" style="margin:20px 0;"></div>
+            <button class="big-btn" id="btnR" onclick="ready()">أنا مستعد ✋</button>
+        </div>
+        <div id="game" class="hidden">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <h3>الجولة <span id="rnd">1</span></h3>
+                <h3 style="color:var(--accent)" id="timerDisplay">60</h3>
+            </div>
+            <div class="letter-circle" id="charDisplay">?</div>
+            <div style="text-align:right;">
+                <div class="input-group"><label>إنسان</label><input type="text" id="human"></div>
+                <div class="input-group"><label>حيوان</label><input type="text" id="animal"></div>
+                <div class="input-group"><label>نبات</label><input type="text" id="plant"></div>
+                <div class="input-group"><label>جماد</label><input type="text" id="inanimate"></div>
+                <div class="input-group"><label>بلد</label><input type="text" id="country"></div>
+            </div>
+            <button class="big-btn" onclick="stop()" style="background:#ff3366; color:#fff;">✋ STOP</button>
+        </div>
+        <div id="results" class="hidden">
+            <h2>النتائج</h2>
+            <div id="resBody"></div>
+            <p style="margin-top:20px; color:#aaa;">الجولة التالية...</p>
+        </div>
+    </div>
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket=io(); let rid='', myId=socket.id;
+        const u = new URLSearchParams(window.location.search);
+        if(u.get('room')) { document.getElementById('code').value=u.get('room'); document.getElementById('pName').style.display='none'; document.getElementById('timeLimit').parentElement.style.display='none'; setTimeout(join,500); }
+        
+        function create(){ rid=Math.random().toString(36).substring(2,6).toUpperCase(); socket.emit('join_game_lobby', {roomId:rid, playerName:document.getElementById('pName').value||"Host", gameType:'stop', timeLimit:parseInt(document.getElementById('timeLimit').value)}); }
+        function join(){ rid=document.getElementById('code').value; if(!rid)return; socket.emit('join_game_lobby', {roomId:rid, playerName:document.getElementById('pName').value||"Guest", gameType:'stop'}); }
+        
+        socket.on('lobby_update', d=>{ rid=d.roomId; document.getElementById('setup').classList.add('hidden'); document.getElementById('lobby').classList.remove('hidden'); document.getElementById('dCode').innerText=rid; document.getElementById('pList').innerHTML=d.players.map(p=>`<div>${p.name} ${p.ready?'✅':'⏳'}</div>`).join(''); });
+        function ready(){ document.getElementById('btnR').innerText="انتظر..."; socket.emit('player_ready_signal', {roomId:rid}); }
+        function cp(){ navigator.clipboard.writeText(window.location.origin+'?room='+rid); alert("نسخت الرابط!"); }
+        
+        socket.on('stop_round_start', d=>{ 
+            document.getElementById('lobby').classList.add('hidden'); document.getElementById('results').classList.add('hidden'); document.getElementById('game').classList.remove('hidden'); 
+            document.getElementById('rnd').innerText=d.round; document.getElementById('charDisplay').innerText=d.char; document.getElementById('timerDisplay').innerText=d.time;
+            ['human','animal','plant','inanimate','country'].forEach(id=>document.getElementById(id).value=''); 
+        });
+        
+        socket.on('stop_timer', t => document.getElementById('timerDisplay').innerText = t);
+        socket.on('force_stop_submit', stop);
+
+        function stop(){ 
+            const ans={human:document.getElementById('human').value, animal:document.getElementById('animal').value, plant:document.getElementById('plant').value, inanimate:document.getElementById('inanimate').value, country:document.getElementById('country').value}; 
+            document.getElementById('game').classList.add('hidden'); 
+            socket.emit('stop_submit', {roomId:rid, answers:ans}); 
+        }
+        
+        socket.on('stop_round_end', d=>{ 
+            document.getElementById('game').classList.add('hidden'); document.getElementById('results').classList.remove('hidden');
+            let html = "";
+            d.players.forEach(p => {
+                const r = d.results[p.id];
+                html += `<h3 style="color:var(--primary); margin-top:20px;">${p.name} (+${r.score})</h3>`;
+                html += `<table class="res-table"><tr><th>فئة</th><th>إجابة</th><th>نقطة</th></tr>`;
+                for(const [k,v] of Object.entries(r.ans)) {
+                    html += `<tr><td>${k}</td><td>${v||'-'}</td><td>${r.details[k]}</td></tr>`;
+                }
+                html += `</table>`;
+            });
+            document.getElementById('resBody').innerHTML = html;
+        });
+        
+        socket.on('stop_game_over', d=>{ alert("الفائز: "+d.players.sort((a,b)=>b.score-a.score)[0].name); location.reload(); });
+    </script>
+</body>
+</html>

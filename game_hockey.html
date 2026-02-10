@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Neon Hockey</title>
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        canvas { background:#111; border-radius:20px; border:3px solid var(--primary); box-shadow:0 0 30px rgba(255,193,7,0.3); display:block; margin:20px auto; width:100%; max-width:400px; height:auto; touch-action:none; }
+        .scoreboard { font-size:2rem; font-weight:bold; color:var(--primary); margin-bottom:10px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div id="setup">
+            <h1 class="main-title">Neon Hockey</h1>
+            <button class="big-btn" onclick="create()">إنشاء غرفة</button>
+            <div style="margin-top:20px; border-top:1px solid rgba(255,255,255,0.1); padding-top:20px;">
+                <input type="text" id="code" placeholder="كود الغرفة">
+                <button class="big-btn" style="background:#333; box-shadow:none;" onclick="join()">انضمام</button>
+            </div>
+        </div>
+        <div id="lobby" class="hidden">
+            <h2>انتظار الخصم...</h2>
+            <div onclick="cp()" style="background:rgba(0,0,0,0.3); padding:15px; border-radius:15px; cursor:pointer; font-size:1.5rem;">Code: <span id="dCode" style="color:var(--primary);">...</span></div>
+            <div id="pList" style="font-size:1.2rem; margin-top:20px;"></div>
+        </div>
+        <div id="game" class="hidden">
+            <div class="scoreboard"><span id="s2">0</span> - <span id="s1">0</span></div>
+            <canvas id="cvs" width="400" height="600"></canvas>
+        </div>
+    </div>
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket=io(); let rid=''; const cvs=document.getElementById('cvs'); const ctx=cvs.getContext('2d');
+        const u = new URLSearchParams(window.location.search);
+        if(u.get('room')) { document.getElementById('code').value=u.get('room'); setTimeout(join,500); }
+        
+        function create(){ init('create'); } function join(){ init('join'); }
+        function init(m){ rid=m==='create'?Math.random().toString(36).substring(2,6).toUpperCase():document.getElementById('code').value; if(!rid)return alert("الكود"); socket.emit('join_game_lobby', {roomId:rid, playerName:"", gameType:'hockey'}); }
+        socket.on('hockey_lobby_update', d=>{ rid=d.roomId; document.getElementById('setup').classList.add('hidden'); document.getElementById('lobby').classList.remove('hidden'); document.getElementById('dCode').innerText=rid; document.getElementById('pList').innerHTML=d.players.map(p=>`<div>${p.name}</div>`).join(''); });
+        socket.on('hockey_countdown', c=>document.getElementById('lobby').innerHTML=`<h1 style="font-size:5rem; color:var(--primary);">${c}</h1>`);
+        socket.on('hockey_start', ()=>{ document.getElementById('lobby').classList.add('hidden'); document.getElementById('game').classList.remove('hidden'); });
+        
+        socket.on('hockey_tick', d=>{
+            document.getElementById('s1').innerText=d.scores.p1; document.getElementById('s2').innerText=d.scores.p2;
+            // Draw Field
+            ctx.fillStyle='#111'; ctx.fillRect(0,0,400,600);
+            ctx.strokeStyle='#333'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(0,300); ctx.lineTo(400,300); ctx.stroke(); ctx.beginPath(); ctx.arc(200,300,50,0,Math.PI*2); ctx.stroke();
+            
+            // Draw Goals (Neon Nets)
+            ctx.shadowBlur = 10; ctx.lineWidth = 5;
+            ctx.shadowColor = '#ff3366'; ctx.strokeStyle = '#ff3366'; ctx.strokeRect(120, -5, 160, 40); // Top Goal
+            ctx.shadowColor = '#00e5ff'; ctx.strokeStyle = '#00e5ff'; ctx.strokeRect(120, 565, 160, 40); // Bottom Goal
+            ctx.shadowBlur = 0; ctx.lineWidth = 0;
+
+            draw(d.paddles.p2.x, d.paddles.p2.y, 30, '#ff3366'); draw(d.paddles.p1.x, d.paddles.p1.y, 30, '#00e5ff'); draw(d.puck.x, d.puck.y, 15, '#ffc107');
+        });
+        
+        function draw(x,y,r,c){ ctx.fillStyle=c; ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill(); ctx.shadowColor=c; ctx.shadowBlur=15; ctx.fill(); ctx.shadowBlur=0; }
+        
+        cvs.addEventListener('touchmove', e=>{ e.preventDefault(); const r=cvs.getBoundingClientRect(); const x=(e.touches[0].clientX-r.left)*(cvs.width/r.width); const y=(e.touches[0].clientY-r.top)*(cvs.height/r.height); socket.emit('hockey_move', {roomId:rid, x, y}); }, {passive:false});
+        cvs.addEventListener('mousemove', e=>{ const r=cvs.getBoundingClientRect(); socket.emit('hockey_move', {roomId:rid, x:e.clientX-r.left, y:e.clientY-r.top}); });
+        
+        socket.on('game_over', d=>alert("الفائز: "+(d.winner===socket.id?"أنت":"الخصم")));
+        function cp(){ navigator.clipboard.writeText(window.location.origin+'?room='+rid); alert("نسخت الرابط!"); }
+    </script>
+</body>
+</html>

@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>X - O</title>
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        .grid { 
+            display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; 
+            max-width: 350px; margin: 20px auto; aspect-ratio: 1/1; 
+        }
+        .cell { 
+            display: flex; align-items: center; justify-content: center; 
+            font-size: 3.5rem; font-weight: bold; cursor: pointer; 
+            background: rgba(255,255,255,0.05); border-radius: 15px;
+            box-shadow: inset 0 0 10px rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1);
+            transition: 0.2s;
+        }
+        .cell:active { transform: scale(0.95); }
+        .cell.X { color: var(--accent); text-shadow: 0 0 20px var(--accent); }
+        .cell.O { color: var(--cyan); text-shadow: 0 0 20px var(--cyan); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div id="setup">
+            <h1 class="main-title">X - O</h1>
+            <button class="big-btn" onclick="create()">إنشاء غرفة</button>
+            <div style="margin-top:20px; border-top:1px solid rgba(255,255,255,0.1); padding-top:20px;">
+                <input type="text" id="code" placeholder="كود الغرفة">
+                <button class="big-btn" style="background:#333; box-shadow:none;" onclick="join()">انضمام</button>
+            </div>
+        </div>
+
+        <div id="lobby" class="hidden">
+            <h2>غرفة الانتظار ⏳</h2>
+            <div onclick="cp()" style="background:rgba(0,0,0,0.3); padding:15px; border-radius:15px; cursor:pointer; font-size:1.5rem; margin-bottom: 20px; border: 1px solid var(--primary);">
+                Code: <span id="dCode" style="color:var(--primary);">...</span> 📋
+            </div>
+            <div id="pList" style="margin:20px 0; font-size: 1.2rem;"></div>
+            <button class="big-btn" id="btnR" onclick="ready()">أنا مستعد ✋</button>
+        </div>
+
+        <div id="game" class="hidden">
+            <div id="status" style="font-size:1.5rem; color:#aaa; margin-bottom:20px; font-weight:bold;">...</div>
+            <div class="grid" id="board"></div>
+            <button class="big-btn hidden" id="btnRematch" onclick="rematch()">لعب مرة أخرى 🔄</button>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket=io(); let rid='';
+        
+        // Auto Join Link
+        const u = new URLSearchParams(window.location.search);
+        if(u.get('room')) { 
+            document.getElementById('code').value=u.get('room'); 
+            document.getElementById('setup').style.display = 'none'; // Hide setup immediately for smoother look
+            setTimeout(join, 500); 
+        }
+
+        function create(){ init('create'); } 
+        function join(){ init('join'); }
+        
+        function init(m){ 
+            rid = m==='create' ? Math.random().toString(36).substring(2,6).toUpperCase() : document.getElementById('code').value; 
+            if(!rid) { document.getElementById('setup').style.display = 'block'; return alert("أدخل الكود"); }
+            // XO doesn't need names, server assigns "Player 1/2"
+            socket.emit('join_game_lobby', {roomId:rid, playerName:"", gameType:'xo'}); 
+        }
+
+        socket.on('lobby_update', d=>{ 
+            rid=d.roomId; 
+            document.getElementById('setup').classList.add('hidden'); 
+            document.getElementById('lobby').classList.remove('hidden'); 
+            document.getElementById('dCode').innerText=rid; 
+            document.getElementById('pList').innerHTML=d.players.map(p=>`
+                <div style="padding:10px; background:rgba(255,255,255,0.05); margin:5px; border-radius:10px;">
+                    ${p.name} ${p.ready?'✅':'⏳'}
+                </div>`).join(''); 
+        });
+
+        function ready(){ 
+            document.getElementById('btnR').innerText="انتظر..."; 
+            socket.emit('player_ready_signal', {roomId:rid}); 
+        }
+        
+        function cp(){ navigator.clipboard.writeText(window.location.origin+'?room='+rid); alert("نسخت الرابط!"); }
+
+        socket.on('xo_start', d=>{ 
+            document.getElementById('lobby').classList.add('hidden'); 
+            document.getElementById('game').classList.remove('hidden'); 
+            document.getElementById('btnRematch').classList.add('hidden'); 
+            render(d.board, d.turnId); 
+        });
+
+        socket.on('xo_update', d=>{ 
+            if(d.winner){ 
+                render(d.board, null); 
+                document.getElementById('status').innerHTML = d.winner===socket.id ? "<span style='color:#4ade80'>🏆 فزت!</span>" : "<span style='color:#f43f5e'>❌ خسرت</span>"; 
+                document.getElementById('btnRematch').classList.remove('hidden'); 
+            } else if(d.draw){ 
+                render(d.board, null); 
+                document.getElementById('status').innerText="تعادل 🤝"; 
+                document.getElementById('btnRematch').classList.remove('hidden'); 
+            } else { 
+                render(d.board, d.turnId); 
+            } 
+        });
+
+        function render(b, tId){ 
+            document.getElementById('board').innerHTML = b.map((c,i)=>
+                `<div class="cell ${c||''}" onclick="socket.emit('xo_move', {roomId:rid, idx:${i}})">${c||''}</div>`
+            ).join(''); 
+            
+            if(tId) document.getElementById('status').innerText = tId===socket.id ? "🟢 دورك" : "🔴 دور الخصم"; 
+        }
+
+        function rematch(){ socket.emit('xo_rematch', {roomId:rid}); }
+    </script>
+</body>
+</html>

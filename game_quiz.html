@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>سين جيم PRO</title>
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        .quiz-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; direction: rtl; }
+        .grid-cell { height: 60px; display: flex; justify-content: center; align-items: center; cursor: pointer; border-radius: 10px; font-size: 1.2rem; }
+        .grid-cell.disabled { opacity: 0.3; pointer-events: none; background: #000; box-shadow: none; }
+        .cat-head img { width: 100%; height: 90px; object-fit: cover; opacity: 0.8; border-radius: 5px; }
+        .cell-cat { display: none; }
+        @media (max-width: 768px) { .quiz-grid { grid-template-columns: repeat(2, 1fr); gap:10px; } .cat-head { display: none; } .grid-cell { height: 80px; flex-direction: column; font-size: 1.4rem; } .cell-cat { display: block !important; font-size: 0.8rem; color: #ccc; margin-bottom: 5px; } }
+        .status-bar { padding: 10px; margin-bottom: 10px; border-radius: 10px; font-weight: bold; }
+        .my-turn { color: #2ecc71; border: 1px solid #2ecc71; } .wait-turn { color: #e74c3c; border: 1px solid #e74c3c; } .steal-turn { color: #f39c12; animation: pulse 1s infinite; }
+        #qImg { width: 100%; max-height: 200px; object-fit: contain; border-radius: 10px; margin-bottom: 15px; border: 1px solid var(--primary); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div id="setup">
+            <h1 class="main-title">سين جيم PRO</h1>
+            <div id="hostArea">
+                <input type="text" id="t1Name" placeholder="اسم فريقك" value="فريق 1">
+                <input type="text" id="t2Name" placeholder="اسم فريق الخصم" value="فريق 2">
+                <p>اختر 6 فئات: <span id="cnt" style="color:var(--primary)">(0/6)</span></p>
+                <div id="catList" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(100px,1fr)); gap:10px; height:300px; overflow-y:auto; margin:10px 0;"></div>
+                <button class="big-btn" id="btnC" disabled onclick="create()">إنشاء غرفة</button>
+            </div>
+            <div style="margin-top:20px; border-top:1px solid rgba(255,255,255,0.1); padding-top:20px;">
+                <input type="text" id="code" placeholder="كود الغرفة">
+                <button class="big-btn" style="background:#333; box-shadow:none;" onclick="join()">انضمام كضيف</button>
+            </div>
+        </div>
+
+        <div id="lobby" class="hidden">
+            <h2>الانتظار... ⏳</h2>
+            <div onclick="cp()" style="background:rgba(0,0,0,0.3); padding:15px; border-radius:15px; cursor:pointer; font-size:1.5rem;">Code: <span id="dCode" style="color:var(--primary);">...</span> 📋</div>
+            <div id="pList" style="margin:20px 0;"></div>
+            <button class="big-btn" id="btnR" onclick="ready()">أنا مستعد ✋</button>
+        </div>
+
+        <div id="game" class="hidden">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                <div><span id="n1">P1</span><br><span id="s1" style="font-size:1.5rem; color:var(--primary)">0</span></div>
+                <div id="statusBadge" class="status-bar">...</div>
+                <div><span id="n2">P2</span><br><span id="s2" style="font-size:1.5rem; color:var(--primary)">0</span></div>
+            </div>
+            <button id="btnD" onclick="dbl()" class="big-btn" style="width:auto; margin:0 auto 10px; padding:5px 20px; background:#444; border:none; box-shadow:none;">⚡ دبل</button>
+            <div class="quiz-grid" id="gridHeads"></div>
+            <div class="quiz-grid" id="gridBody"></div>
+        </div>
+    </div>
+
+    <div id="modal" class="hidden modal">
+        <div class="modal-content">
+            <div id="dblMsg" class="hidden" style="color:#ff00cc; font-weight:bold; font-size:1.5rem;">⚡ x2 ⚡</div>
+            <h2 id="tmr" style="font-size:3rem; margin:10px 0; color:var(--primary);">60</h2>
+            <img id="qImg" src="" class="hidden">
+            <p id="qStatusMsg" style="color:#aaa;"></p>
+            <p id="qTxt" style="font-size:1.3rem; margin:20px 0; font-weight:bold;">...</p>
+            <div id="inpArea">
+                <input type="text" id="ans" placeholder="الإجابة...">
+                <button id="btnSend" onclick="send()" class="big-btn">إرسال</button>
+            </div>
+            <div id="resArea" class="hidden">
+                <h2 id="resT"></h2> <p id="resA" style="color:#ccc; margin:10px 0;"></p> <p id="resP" style="font-size:2rem; color:var(--primary);"></p>
+            </div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket=io(); let sel=[], rid='', isD=false, myIdx=-1;
+        
+        // Auto Join
+        const u = new URLSearchParams(window.location.search);
+        if(u.get('room')) { 
+            document.getElementById('code').value=u.get('room'); 
+            document.getElementById('hostArea').style.display='none'; 
+            setTimeout(join, 500); 
+        }
+        
+        socket.emit('get_cats');
+        socket.on('cats_data', d => { document.getElementById('catList').innerHTML = d.map(c => `<div style="border:1px solid #444; border-radius:10px; overflow:hidden; cursor:pointer;" onclick="tg(this,'${c.name}')"><img src="${c.image}" style="width:100%; height:70px; object-fit:cover;"><div style="font-size:0.8rem; padding:5px;">${c.name}</div></div>`).join(''); });
+        function tg(el,n){ if(sel.includes(n)){ sel=sel.filter(x=>x!==n); el.style.borderColor='#444'; } else { if(sel.length>=6)return; sel.push(n); el.style.borderColor='var(--primary)'; } document.getElementById('cnt').innerText=`(${sel.length}/6)`; document.getElementById('btnC').disabled=sel.length!==6; }
+        function create(){ rid=Math.random().toString(36).substring(2,6).toUpperCase(); socket.emit('join_game_lobby', {roomId:rid, playerName:document.getElementById('t1Name').value||"فريق 1", gameType:'quiz', cats:sel, teamNames:[document.getElementById('t1Name').value||"فريق 1", document.getElementById('t2Name').value||"فريق 2"]}); }
+        function join(){ rid=document.getElementById('code').value; if(!rid)return; socket.emit('join_game_lobby', {roomId:rid, playerName:"", gameType:'quiz'}); }
+        socket.on('lobby_update', d=>{ rid=d.roomId; d.players.forEach((p,i)=>{if(p.id===socket.id)myIdx=i;}); document.getElementById('setup').classList.add('hidden'); document.getElementById('lobby').classList.remove('hidden'); document.getElementById('dCode').innerText=rid; document.getElementById('pList').innerHTML=d.players.map(p=>`<div style="padding:10px; border-bottom:1px solid #444;">${p.name} ${p.ready?'✅':'⏳'}</div>`).join(''); });
+        function ready(){ document.getElementById('btnR').innerText="انتظر..."; socket.emit('player_ready_signal', {roomId:rid}); }
+        function cp(){ navigator.clipboard.writeText(window.location.origin+'?room='+rid); alert("نسخت الرابط!"); }
+        socket.on('game_start_now', ({roomState})=>{ document.getElementById('lobby').classList.add('hidden'); document.getElementById('game').classList.remove('hidden'); render(roomState); });
+        socket.on('quiz_ui_update', render);
+        function render(r){
+            document.getElementById('n1').innerText=r.players[0].name; document.getElementById('s1').innerText=r.players[0].score;
+            document.getElementById('n2').innerText=r.players[1].name; document.getElementById('s2').innerText=r.players[1].score;
+            const b=document.getElementById('statusBadge'); const myT=r.activePlayerIdx===myIdx;
+            if(r.qState==='idle'){ b.className=myT?'status-bar my-turn':'status-bar wait-turn'; b.innerText=myT?"🟢 دورك":"🔴 خصمك"; }
+            else if(r.qState==='answering'){ b.className='status-bar wait-turn'; b.innerText="جاري الإجابة..."; }
+            else { b.className='status-bar steal-turn'; b.innerText="🚨 سرقة!"; }
+            document.getElementById('gridHeads').innerHTML=r.catData.map(c=>`<div class="cat-head"><img src="${c.image}"><span>${c.name}</span></div>`).join('');
+            document.getElementById('gridBody').innerHTML='';
+            for(let q=0;q<6;q++){ r.catData.forEach((c,i)=>{ const u=r.qBoard[i][q]===1; const a=!u&&myT&&r.qState==='idle'; document.getElementById('gridBody').innerHTML+=`<div class="grid-cell ${u?'disabled':''}" onclick="${a?`pick(${i},${q})`:''}" style="opacity:${a?1:0.5}"><div class="cell-cat">${c.name}</div>${[200,200,400,400,600,600][q]}</div>`; }); }
+            const bd=document.getElementById('btnD'); const me=r.players.find(p=>p.id===socket.id);
+            if(me.dblUsed){ bd.disabled=true; bd.innerText="مستخدم"; bd.style.background="#222"; } else { bd.style.background=isD?"var(--accent)":"#444"; bd.disabled=!myT; }
+        }
+        function dbl(){ isD=!isD; document.getElementById('btnD').style.background=isD?"var(--accent)":"#444"; }
+        function pick(c,q){ socket.emit('quiz_pick', {roomId:rid, cI:c, qI:q, dbl:isD}); isD=false; }
+        
+        socket.on('open_q', d=>{
+            document.getElementById('modal').classList.remove('hidden'); document.getElementById('inpArea').classList.remove('hidden'); document.getElementById('resArea').classList.add('hidden');
+            document.getElementById('qTxt').innerText=d.q.q; document.getElementById('ans').value=''; document.getElementById('dblMsg').classList.toggle('hidden',!d.dbl);
+            
+            // Image Handling
+            const imgEl = document.getElementById('qImg');
+            // If specific question has image, use it. Else use category image.
+            const imgSrc = d.q.img || d.catImg; 
+            if(imgSrc) { imgEl.src=imgSrc; imgEl.classList.remove('hidden'); } else { imgEl.classList.add('hidden'); }
+
+            const act=d.activeIdx===myIdx; const inp=document.getElementById('ans'); const btn=document.getElementById('btnSend');
+            if(act){ inp.disabled=false; btn.disabled=false; inp.placeholder="اكتب..."; inp.focus(); } else { inp.disabled=true; btn.disabled=true; inp.placeholder="انتظر..."; }
+        });
+        socket.on('timer', t=>document.getElementById('tmr').innerText=t);
+        socket.on('q_res_temp', d=>{ document.getElementById('resArea').classList.remove('hidden'); document.getElementById('inpArea').classList.add('hidden'); document.getElementById('resT').innerText=d.msg; document.getElementById('resA').innerText=""; document.getElementById('resP').innerText=""; });
+        socket.on('q_res', d=>{ document.getElementById('inpArea').classList.add('hidden'); document.getElementById('resArea').classList.remove('hidden'); document.getElementById('resT').innerText=d.msg; document.getElementById('resA').innerText="الجواب: "+d.ans; document.getElementById('resP').innerText=d.pts>0?`+${d.pts}`:""; setTimeout(()=>document.getElementById('modal').classList.add('hidden'),3000); });
+        function send(){ socket.emit('quiz_ans', {roomId:rid, ans:document.getElementById('ans').value}); }
+        document.getElementById('ans').addEventListener("keypress", e=>{if(e.key==="Enter"){e.preventDefault(); document.getElementById("btnSend").click();}});
+    </script>
+</body>
+</html>
